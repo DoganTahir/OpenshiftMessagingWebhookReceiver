@@ -25,6 +25,7 @@ public class AlertController : ControllerBase
     /// <param name="payload">Alertmanager webhook payload (version, status, alerts[]). alerts[].labels: alertname, namespace, service, severity; annotations: summary.</param>
     /// <returns>İşlenen, atlanan ve toplam alarm sayıları.</returns>
     [HttpPost("alert")]
+    [IgnoreAntiforgeryToken] 
     [ProducesResponseType(typeof(AlertResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> ReceiveAlert([FromBody] AlertPayload payload, CancellationToken cancellationToken)

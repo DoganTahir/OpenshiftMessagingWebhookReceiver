@@ -14,6 +14,7 @@ public class HealthController : ControllerBase
     }
 
     [HttpGet("health")]
+    [IgnoreAntiforgeryToken]
     public IActionResult Health()
     {
         return Ok(new
@@ -25,6 +26,7 @@ public class HealthController : ControllerBase
     }
 
     [HttpGet("ready")]
+    [IgnoreAntiforgeryToken]
     public IActionResult Ready()
     {
         // Add readiness checks here if needed (e.g., database connectivity, external service availability)
@@ -36,6 +38,7 @@ public class HealthController : ControllerBase
     }
 
     [HttpGet("live")]
+    [IgnoreAntiforgeryToken]
     public IActionResult Live()
     {
         // Liveness probe - indicates the service is running

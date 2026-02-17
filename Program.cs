@@ -1,7 +1,6 @@
 using OpenshiftWebHook.Services;
 using Serilog;
 
-
 var builder = WebApplication.CreateBuilder(args);
 
 // Configure Serilog

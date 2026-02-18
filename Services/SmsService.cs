@@ -63,23 +63,16 @@ public class SmsService : ISmsService
             var messageId = _configuration["SmsProvider:MessageId"] 
                 ?? $"A{DateTime.UtcNow:yyyyMMddHHmmss}";
 
-            // 3. Form-urlencoded body oluştur
-            var formData = new List<KeyValuePair<string, string>>
-            {
-                new("message", message),
-                new("messageId", messageId),
-                new("mobileNumber", _mobileNumber)
-            };
-
-            var formContent = new FormUrlEncodedContent(formData);
+            // 3. Raw data formatında body oluştur (form-urlencoded string)
+            var rawData = $"message={Uri.EscapeDataString(message)}&messageId={Uri.EscapeDataString(messageId)}&mobileNumber={Uri.EscapeDataString(_mobileNumber)}";
+            var rawContent = new StringContent(rawData, System.Text.Encoding.UTF8, "application/x-www-form-urlencoded");
 
             // 4. Bearer token ile istek gönder (retry ile)
             var response = await _retryPolicy.ExecuteAsync(async () =>
             {
                 using var request = new HttpRequestMessage(HttpMethod.Post, "");
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-                request.Content = formContent;
-                request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/x-www-form-urlencoded");
+                request.Content = rawContent;
 
                 return await _httpClient.SendAsync(request, cancellationToken);
             });

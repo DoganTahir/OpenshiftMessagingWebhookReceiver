@@ -22,6 +22,7 @@ builder.Services.AddSwaggerGen(c =>
 });
 
 // Register services
+builder.Services.AddHttpClient<ITokenService, TokenService>();
 builder.Services.AddHttpClient<ISmsService, SmsService>();
 
 // Configure JSON options for Alertmanager payload

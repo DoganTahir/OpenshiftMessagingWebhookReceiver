@@ -1,70 +1,99 @@
-using System.Text.Json;
+using System.Net.Http.Headers;
+using Polly;
+using Polly.Extensions.Http;
 
 namespace OpenshiftWebHook.Services;
 
 public class SmsService : ISmsService
 {
     private readonly HttpClient _httpClient;
+    private readonly ITokenService _tokenService;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<SmsService> _logger;
-    private readonly string _smsApiUrl;
-    private readonly string? _smsApiKey;
-    private readonly string? _smsApiSecret;
-    private readonly string? _smsFromNumber;
-    private readonly string _smsToNumber;
+    private readonly IAsyncPolicy<HttpResponseMessage> _retryPolicy;
+    private readonly string _messageEndpoint;
+    private readonly string _mobileNumber;
 
     public SmsService(
         HttpClient httpClient,
+        ITokenService tokenService,
         IConfiguration configuration,
         ILogger<SmsService> logger)
     {
         _httpClient = httpClient;
+        _tokenService = tokenService;
+        _configuration = configuration;
         _logger = logger;
-        
-        // Get configuration from appsettings.json
-        _smsApiUrl = configuration["SmsProvider:ApiUrl"] 
-            ?? throw new InvalidOperationException("SmsProvider:ApiUrl configuration is required");
-        _smsApiKey = configuration["SmsProvider:ApiKey"];
-        _smsApiSecret = configuration["SmsProvider:ApiSecret"];
-        _smsFromNumber = configuration["SmsProvider:FromNumber"];
-        _smsToNumber = configuration["SmsProvider:ToNumber"] 
-            ?? throw new InvalidOperationException("SmsProvider:ToNumber configuration is required");
 
-        // Configure HTTP client
-        _httpClient.BaseAddress = new Uri(_smsApiUrl);
+        _messageEndpoint = configuration["SmsProvider:MessageEndpoint"]
+            ?? throw new InvalidOperationException("SmsProvider:MessageEndpoint configuration is required");
+        _mobileNumber = configuration["SmsProvider:MobileNumber"]
+            ?? throw new InvalidOperationException("SmsProvider:MobileNumber configuration is required");
+
+        // Retry policy: maksimum 3 deneme, exponential backoff
+        var maxRetries = configuration.GetValue<int>("SmsProvider:MaxRetries", 3);
+        var baseDelay = TimeSpan.FromSeconds(configuration.GetValue<int>("SmsProvider:RetryBaseDelaySeconds", 2));
+
+        _retryPolicy = HttpPolicyExtensions
+            .HandleTransientHttpError()
+            .OrResult(msg => !msg.IsSuccessStatusCode)
+            .WaitAndRetryAsync(
+                maxRetries,
+                retryAttempt => baseDelay * Math.Pow(2, retryAttempt),
+                onRetry: (outcome, timespan, retryCount, context) =>
+                {
+                    _logger.LogWarning(
+                        "SMS send attempt {RetryCount} failed. Retrying in {Delay}ms. Error: {Error}",
+                        retryCount, timespan.TotalMilliseconds,
+                        outcome.Exception?.Message ?? outcome.Result?.StatusCode.ToString());
+                });
+
+        _httpClient.BaseAddress = new Uri(_messageEndpoint);
         _httpClient.Timeout = TimeSpan.FromSeconds(30);
-        
-        if (!string.IsNullOrEmpty(_smsApiKey))
-        {
-            _httpClient.DefaultRequestHeaders.Add("X-API-Key", _smsApiKey);
-        }
     }
 
     public async Task<bool> SendSmsAsync(string message, CancellationToken cancellationToken = default)
     {
         try
         {
-            var requestBody = new
+            // 1. Access token al (cache'den veya yeni)
+            var accessToken = await _tokenService.GetAccessTokenAsync(cancellationToken);
+
+            // 2. Message ID oluştur (opsiyonel, timestamp bazlı)
+            var messageId = _configuration["SmsProvider:MessageId"] 
+                ?? $"A{DateTime.UtcNow:yyyyMMddHHmmss}";
+
+            // 3. Form-urlencoded body oluştur
+            var formData = new List<KeyValuePair<string, string>>
             {
-                to = _smsToNumber,
-                from = _smsFromNumber,
-                message = message
+                new("message", message),
+                new("messageId", messageId),
+                new("mobileNumber", _mobileNumber)
             };
 
-            var json = JsonSerializer.Serialize(requestBody);
-            var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
-            
-            var response = await _httpClient.PostAsync("/send", content, cancellationToken);
+            var formContent = new FormUrlEncodedContent(formData);
+
+            // 4. Bearer token ile istek gönder (retry ile)
+            var response = await _retryPolicy.ExecuteAsync(async () =>
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Post, "");
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+                request.Content = formContent;
+                request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/x-www-form-urlencoded");
+
+                return await _httpClient.SendAsync(request, cancellationToken);
+            });
 
             if (response.IsSuccessStatusCode)
             {
-                _logger.LogInformation("SMS sent successfully");
+                _logger.LogInformation("SMS sent successfully. MessageId: {MessageId}", messageId);
                 return true;
             }
             else
             {
                 var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
-                _logger.LogError("SMS send failed with status {StatusCode}: {Error}", 
-                    response.StatusCode, errorContent);
+                _logger.LogError("SMS send failed with status {StatusCode}: {Error}. MessageId: {MessageId}",
+                    response.StatusCode, errorContent, messageId);
                 return false;
             }
         }

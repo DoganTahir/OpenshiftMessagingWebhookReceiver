@@ -11,7 +11,7 @@ public class SmsService : ISmsService
     private readonly IConfiguration _configuration;
     private readonly ILogger<SmsService> _logger;
     private readonly IAsyncPolicy<HttpResponseMessage> _retryPolicy;
-    private readonly string _messageEndpoint;
+    private readonly Uri _messageEndpoint;
     private readonly string _mobileNumber;
 
     public SmsService(
@@ -25,8 +25,12 @@ public class SmsService : ISmsService
         _configuration = configuration;
         _logger = logger;
 
-        _messageEndpoint = configuration["SmsProvider:MessageEndpoint"]
-            ?? throw new InvalidOperationException("SmsProvider:MessageEndpoint configuration is required");
+        var messageEndpoint = configuration["SmsProvider:MessageEndpoint"];
+        if (string.IsNullOrWhiteSpace(messageEndpoint))
+            throw new InvalidOperationException("SmsProvider:MessageEndpoint configuration is required (absolute URL).");
+        if (!Uri.TryCreate(messageEndpoint, UriKind.Absolute, out _messageEndpoint))
+            throw new InvalidOperationException($"SmsProvider:MessageEndpoint must be an absolute URL. Value: '{messageEndpoint}'");
+
         _mobileNumber = configuration["SmsProvider:MobileNumber"]
             ?? throw new InvalidOperationException("SmsProvider:MobileNumber configuration is required");
 
@@ -48,8 +52,11 @@ public class SmsService : ISmsService
                         outcome.Exception?.Message ?? outcome.Result?.StatusCode.ToString());
                 });
 
-        _httpClient.BaseAddress = new Uri(_messageEndpoint);
+        _httpClient.BaseAddress = _messageEndpoint;
         _httpClient.Timeout = TimeSpan.FromSeconds(30);
+
+        _logger.LogInformation("SmsService configured. MessageEndpoint={MessageEndpoint}, MobileNumber={MobileNumber}",
+            _messageEndpoint, _mobileNumber);
     }
 
     public async Task<bool> SendSmsAsync(string message, CancellationToken cancellationToken = default)

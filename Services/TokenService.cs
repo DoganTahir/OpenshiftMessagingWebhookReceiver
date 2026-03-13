@@ -13,6 +13,7 @@ public class TokenService : ITokenService
     private readonly ConcurrentDictionary<string, CachedToken> _tokenCache = new();
     private readonly SemaphoreSlim _tokenLock = new(1, 1);
     private readonly IAsyncPolicy<HttpResponseMessage> _retryPolicy;
+    private readonly Uri _authEndpoint;
 
     public TokenService(
         HttpClient httpClient,
@@ -23,10 +24,12 @@ public class TokenService : ITokenService
         _configuration = configuration;
         _logger = logger;
 
-        var authEndpoint = configuration["SmsProvider:AuthEndpoint"]
-            ?? throw new InvalidOperationException("SmsProvider:AuthEndpoint configuration is required");
+        var authEndpoint = configuration["SmsProvider:AuthEndpoint"];
+        if (string.IsNullOrWhiteSpace(authEndpoint))
+            throw new InvalidOperationException("SmsProvider:AuthEndpoint configuration is required (absolute URL).");
+        if (!Uri.TryCreate(authEndpoint, UriKind.Absolute, out _authEndpoint))
+            throw new InvalidOperationException($"SmsProvider:AuthEndpoint must be an absolute URL. Value: '{authEndpoint}'");
 
-        _httpClient.BaseAddress = new Uri(authEndpoint);
         _httpClient.Timeout = TimeSpan.FromSeconds(30);
 
         // Retry policy: maksimum 3 deneme, exponential backoff
@@ -106,7 +109,7 @@ public class TokenService : ITokenService
             // Retry policy ile token isteği
             var response = await _retryPolicy.ExecuteAsync(async () =>
             {
-                return await _httpClient.PostAsync("", content, cancellationToken);
+                return await _httpClient.PostAsync(_authEndpoint, content, cancellationToken);
             });
 
             if (!response.IsSuccessStatusCode)

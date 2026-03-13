@@ -104,7 +104,9 @@ public class TokenService : ITokenService
             var json = JsonSerializer.Serialize(requestBody);
             var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
 
-            _logger.LogInformation("Requesting access token from auth endpoint");
+            _logger.LogInformation(
+                "Requesting access token from auth endpoint. Endpoint={Endpoint}, GrantType={GrantType}, ClientId={ClientId}",
+                _authEndpoint, grantType, clientId);
 
             // Retry policy ile token isteği
             var response = await _retryPolicy.ExecuteAsync(async () =>
@@ -115,8 +117,9 @@ public class TokenService : ITokenService
             if (!response.IsSuccessStatusCode)
             {
                 var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
-                _logger.LogError("Token request failed with status {StatusCode}: {Error}",
-                    response.StatusCode, errorContent);
+                _logger.LogError(
+                    "Token request failed. Status={StatusCode}, Reason={ReasonPhrase}, Endpoint={Endpoint}, ErrorBody={Error}",
+                    response.StatusCode, response.ReasonPhrase, _authEndpoint, errorContent);
                 throw new InvalidOperationException(
                     $"Failed to obtain access token. Status: {response.StatusCode}, Error: {errorContent}");
             }
